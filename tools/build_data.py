@@ -11,6 +11,7 @@ import textwrap
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import content  # noqa: E402
 import ticmusic  # noqa: E402
+import gfx  # noqa: E402
 from gfx import (Canvas, NONE, PAL2C64, cdist, cells_of, lua_rle_arrays, load_tic,  # noqa: E402
                  mc_figure_cell, mc_scene_cell, opaque_cell, render_map, render_rle, sprite_cell,
                  cell_pixels)
@@ -152,15 +153,21 @@ def build_figure(sprites, parts, scale=1):
     return cv, ox, oy
 
 
+DRAWN, DRAWN_PROBLEMS = gfx.load_figures(os.path.join(ASSETS, 'figures.txt'))
+PATCHES = gfx.load_patches(os.path.join(ASSETS, 'scene_patches.txt'))
+assert not DRAWN_PROBLEMS, DRAWN_PROBLEMS
+
+
 def emit_mc_figure(asm, name, cv):
-    """A multicolor figure: w, h, then per cell 0 (empty) or 1, 8 bytes
-    (%00 = see-through), (c1 << 4) | c2, c3."""
-    w, h = cv.w // 8, cv.h // 8
+    """A multicolor figure, drawn for the C64 (tools/assets/figures.txt): w, h,
+    then per cell 0 (empty) or 1, 8 bytes (%00 = see-through), (c1 << 4) | c2, c3."""
+    rows = DRAWN[name]
+    w, h = len(rows[0]) // 4, len(rows) // 8
+    assert (w, h) == (cv.w // 8, cv.h // 8), name
     asm.label('fig_' + name)
     data = [w, h]
-    for cy in range(h):
-        for cx in range(w):
-            c = mc_figure_cell(cell_pixels(cv, cx, cy))
+    for crow in gfx.mc_cells(rows, transparent=True):
+        for c in crow:
             if c is None:
                 data.append(0)
             else:
@@ -308,9 +315,10 @@ def build_gfx():
     for name, cv in (('bedroom', render_map(tiles, mp, 0)), ('street', render_map(tiles, mp, 30)),
                      ('office', render_map(tiles, mp, 60))):
         cells, screen, colram = [], [], []
-        for row in cells_of(cv):
-            for px in row:
-                data, sc, cr = mc_scene_cell(px)
+        pal = gfx.SCENE_PAL.get(name, PAL2C64)
+        img = gfx.apply_patches(gfx.to_c64(gfx.half_scene(cv), pal), PATCHES.get(name, []))
+        for row in gfx.mc_cells(img):
+            for data, sc, cr in row:
                 cells.append(tuple(data))
                 screen.append(sc)
                 colram.append(cr)

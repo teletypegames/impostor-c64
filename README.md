@@ -51,19 +51,25 @@ start at any ascension, the end screen).
 ## The port
 
 - **Screen:** the scenes are a multicolor bitmap - 4 colors in every
-  4x8 cell (black + 3), so the people keep the colors of the original -
-  while the HUD, the decision bar and every text are hires: a raster
-  interrupt switches the mode row by row (the scene rows 0-16, the
-  question box of a discussion hires again, at the toilet only the
-  circle's rows multicolor). The TIC-80's 240x136 scene sits in the
-  top 30x17 cells, two of its pixels to one multicolor pixel (of two
-  different ones the rarer in the cell stays: the eye, the outline,
-  the stripe). The mysterious man, the day card and the work screen
-  are hires pictures. The art is converted by `tools/build_data.py`.
-- **Figures:** the people are laid over the scene pixel by pixel at
-  run time; every cell then takes the three colors that matter most
-  (the figure's pixels count four times) besides black. Norman's echo
-  wears cyan instead of white.
+  4x8 cell (black + 3) - while the HUD, the decision bar and every text
+  are hires: a raster interrupt switches the mode row by row (the scene
+  rows 0-16, the question box of a discussion hires again, at the
+  toilet only the circle's rows multicolor). The TIC-80's 240x136 scene
+  sits in the top 30x17 cells, two of its pixels to one multicolor
+  pixel: of two different ones black wins (the outlines and lines stay
+  whole), else the color covering more of the cell (calm surfaces), and
+  a dither stays a dither. The office's navy floor is a blue / dark grey
+  dither. A few props are drawn by hand over the conversion
+  (`tools/assets/scene_patches.txt`): the TTG whiteboard, the plant, the
+  laptops, papers and mug of the office, the bookshelf and desk of the
+  bedroom, the pizza stand's sign. The mysterious man, the day card and
+  the work screen are hires pictures.
+- **Figures:** every person is drawn by hand for the C64, after the
+  original (`tools/assets/figures.txt`): multicolor pixels with a closed
+  black outline, at most three colors a cell. They are laid over the
+  scene pixel by pixel at run time; every cell then takes the three
+  colors that matter most (the figure's pixels count four times) besides
+  black. Norman's echo is a ghost of him: cyan, purple and grey.
 - **Effects:** the focus circle (the alarm and the sleep minigames, the
   toilet) recolors the scene cells from a shadow copy; the glitch puts
   random vertical stripes into the bitmap and takes them back next
@@ -134,7 +140,9 @@ x64sc -default -autostartprgmode 1 -limitcycles 30000000 \
 - `gen_music.asm` - generated: the original's tracks
 - `script.asm` - scripted input for test builds
 - `gen_gfx.asm` / `gen_text.asm` - generated data
-- `tools/` - the converter (`build_data.py`, `gfx.py`, `ticmusic.py`), the texts
+- `tools/` - the converter (`build_data.py`, `gfx.py`, `ticmusic.py`; `preview.py`
+  renders a scene with its figures as the C64 shows it, beside the original), the
+  drawn figures and props (`assets/figures.txt`, `assets/scene_patches.txt`), the texts
   (`content.py`) and the original's TIC-80 assets (`tools/assets`)
 
 ## Memory

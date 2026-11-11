@@ -210,10 +210,14 @@ def preview_scene(cv, path, figures=()):
 
 # ------------------------------------------------------------ multicolor
 
+HALF_RULE = 'black'
+
+
 def mc_half(px, transparent=False):
     """An 8x8 cell of C64 colors (NONE = see-through) -> 4x8 multicolor pixels.
-    Of two different neighbours the rarer one in the cell is kept: it is the detail
-    (an eye, an outline, a stripe); an opaque pixel always beats a see-through one."""
+    Of two different neighbours black wins (the outlines and the lines stay whole),
+    else the color that covers more of the cell (flat, calm surfaces); an opaque
+    pixel always beats a see-through one."""
     flat = [c for row in px for c in row if c != NONE]
     out = []
     for row in px:
@@ -224,8 +228,12 @@ def mc_half(px, transparent=False):
                 r.append(a)
             elif a == NONE or b == NONE:
                 r.append(b if a == NONE else a)
-            else:
+            elif HALF_RULE == 'black' and (a == 0 or b == 0):
+                r.append(0)
+            elif HALF_RULE == 'rare':
                 r.append(a if flat.count(a) <= flat.count(b) else b)
+            else:
+                r.append(a if flat.count(a) >= flat.count(b) else b)
         out.append(r)
     return out
 
@@ -281,3 +289,186 @@ def mc_figure_cell(px):
         data.append(v)
     pal = pal + [0] * (3 - len(pal))
     return data, (pal[0] << 4) | pal[1], pal[2]
+
+
+# ------------------------------------------------------------ multicolor, v2
+
+# the scenes' palettes: the office's navy floor is a blue / dark grey dither,
+# calmer than the C64's bright blue
+SCENE_PAL = {
+    'office': [0, 11, 15, (6, 11), 1, 8, 2, 7, 5, 14, 12, 13, 10, 10, 15, 10],
+}
+
+# the conversion works on the original's palette indexes at multicolor
+# resolution; a scene palette maps them to C64 colors, an entry may be a pair
+# (a, b): a checkerboard of the two (to darken a color the C64 does not have)
+
+def half_scene(cv):
+    """The scene at multicolor resolution: black wins a pair (lines, outlines),
+    else the color covering more of its 8x8 cell (calm surfaces)."""
+    w = cv.w // 2
+    out = [[0] * w for _ in range(cv.h)]
+    for cy in range(cv.h // 8):
+        for cx in range(cv.w // 8):
+            cell = [cv.px[cy * 8 + y][cx * 8 + x] for y in range(8) for x in range(8)]
+            for y in range(8):
+                for x in range(4):
+                    a = cv.px[cy * 8 + y][cx * 8 + 2 * x]
+                    b = cv.px[cy * 8 + y][cx * 8 + 2 * x + 1]
+                    row = cv.px[cy * 8 + y]
+                    gx = cx * 8 + 2 * x
+                    nxt = row[gx + 2] if gx + 2 < cv.w else row[gx]
+                    if a == b:
+                        c = a
+                    elif a == 0 or b == 0:
+                        c = 0
+                    elif nxt == a:
+                        # a dither of two colors stays a dither
+                        c = a if ((cx * 4 + x + cy * 8 + y) & 1) == 0 else b
+                    else:
+                        c = a if cell.count(a) >= cell.count(b) else b
+                    out[cy * 8 + y][cx * 4 + x] = c
+    return out
+
+
+def half_figure(cv):
+    """A figure at multicolor resolution: an opaque pixel beats a see-through one,
+    black wins at the row's edges (the contour), inside the rarer one of the row
+    stays (the eyes, the buttons)."""
+    w = cv.w // 2
+    out = [[NONE] * w for _ in range(cv.h)]
+    for y in range(cv.h):
+        row = cv.px[y]
+        solid = [c for c in row if c != NONE]
+        for x in range(w):
+            a, b = row[2 * x], row[2 * x + 1]
+            if a == b:
+                c = a
+            elif a == NONE or b == NONE:
+                c = b if a == NONE else a
+            elif 0 in (a, b):
+                left = row[2 * x - 1] if x > 0 else NONE
+                right = row[2 * x + 2] if 2 * x + 2 < cv.w else NONE
+                if left == NONE or right == NONE:
+                    c = 0
+                else:
+                    other = b if a == 0 else a
+                    c = 0 if solid.count(0) <= solid.count(other) else other
+            else:
+                c = a if solid.count(a) <= solid.count(b) else b
+            out[y][x] = c
+    return out
+
+
+def to_c64(half, pal):
+    """Original palette indexes -> C64 colors (NONE stays); pal[i] is a color or a
+    (a, b) checkerboard."""
+    out = []
+    for y, row in enumerate(half):
+        r = []
+        for x, c in enumerate(row):
+            if c == NONE:
+                r.append(NONE)
+                continue
+            m = pal[c]
+            if isinstance(m, tuple):
+                m = m[(x + y) & 1]
+            r.append(m)
+        out.append(r)
+    return out
+
+
+def mc_cells(img, transparent=False):
+    """Multicolor pixels (C64 colors) -> cells: scene (data, screen, colram) or
+    figure None / (data, c12, c3)."""
+    h, w = len(img) // 8, len(img[0]) // 4
+    cells = []
+    for cy in range(h):
+        row = []
+        for cx in range(w):
+            px = [img[cy * 8 + y][cx * 4:cx * 4 + 4] for y in range(8)]
+            flat = [c for r in px for c in r]
+            if transparent:
+                solid = [c for c in flat if c != NONE]
+                if not solid:
+                    row.append(None)
+                    continue
+                pal = mc_palette(solid, 3)
+                data = []
+                for r in px:
+                    v = 0
+                    for c in r:
+                        code = 0 if c == NONE else 1 + pal.index(min(pal, key=lambda p: cdist(c, p)))
+                        v = (v << 2) | code
+                    data.append(v)
+                pal = pal + [0] * (3 - len(pal))
+                row.append((data, (pal[0] << 4) | pal[1], pal[2]))
+            else:
+                pal = mc_palette(flat, 3, fixed=(0,))
+                full = [0] + pal
+                data = []
+                for r in px:
+                    v = 0
+                    for c in r:
+                        v = (v << 2) | full.index(min(full, key=lambda p: cdist(c, p)))
+                    data.append(v)
+                pal = pal + [0] * (3 - len(pal))
+                row.append((data, (pal[0] << 4) | pal[1], pal[2]))
+        cells.append(row)
+    return cells
+
+
+# ------------------------------------------------------------ the drawn figures
+
+FIG_LETTERS = {'.': NONE, 'K': 0, 'W': 1, 'R': 2, 'C': 3, 'P': 4, 'G': 5, 'B': 6, 'Y': 7,
+               'O': 8, 'N': 9, 'L': 10, 'D': 11, 'M': 12, 'E': 13, 'U': 14, 'S': 15}
+
+
+def load_figures(path):
+    """figures.txt -> {name: rows of C64 colors (NONE = see-through)}; checks the
+    three-color limit of every 4x8 block."""
+    figs, name, problems = {}, None, []
+    for line in open(path):
+        line = line.rstrip('\n')
+        if line.startswith('#') or not line.strip():
+            continue
+        if line.startswith('== '):
+            name = line[3:].strip()
+            figs[name] = []
+            continue
+        figs[name].append([FIG_LETTERS[ch] for ch in line])
+    for name, rows in figs.items():
+        w = len(rows[0])
+        assert all(len(r) == w for r in rows), name
+        assert w % 4 == 0 and len(rows) % 8 == 0, name
+        for by in range(len(rows) // 8):
+            for bx in range(w // 4):
+                cols = {rows[by * 8 + y][bx * 4 + x] for y in range(8) for x in range(4)} - {NONE}
+                if len(cols) > 3:
+                    problems.append('%s block %d,%d: %d colors' % (name, bx, by, len(cols)))
+    return figs, problems
+
+
+def load_patches(path):
+    """scene_patches.txt -> {scene: [(x, y, rows of C64 colors or NONE)]}"""
+    out, cur = {}, None
+    for line in open(path):
+        line = line.rstrip('\n')
+        if line.startswith('#') or not line.strip():
+            continue
+        if line.startswith('== '):
+            name, x, y = line[3:].split()
+            cur = []
+            out.setdefault(name, []).append((int(x), int(y), cur))
+            continue
+        cur.append([FIG_LETTERS[ch] for ch in line])
+    return out
+
+
+def apply_patches(img, patches):
+    for x0, y0, rows in patches:
+        for y, row in enumerate(rows):
+            for x, c in enumerate(row):
+                if c != NONE:
+                    img[y0 + y][x0 + x] = c
+    return img

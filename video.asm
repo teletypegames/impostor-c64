@@ -2265,8 +2265,9 @@ bitmask: !byte $80, $40, $20, $10, $08, $04, $02, $01
 
 ; brightness of each C64 color, for the color merge
 luma:    !byte 0, 32, 10, 24, 12, 18, 8, 28, 12, 7, 18, 11, 16, 28, 18, 23
-; norman's echo: white turns cyan, the rest stays
-echotbl: !byte 0, 3, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+; norman's echo, a ghost of him: white turns cyan, blue purple, skin and
+; hair grey
+echotbl: !byte 0, 3, 2, 3, 4, 5, 4, 7, 12, 9, 15, 11, 12, 13, 14, 15
 ; each color one step darker
 fadetbl: !byte $00, $0f, $09, $0c, $0b, $0b, $00, $08
          !byte $02, $00, $02, $00, $0b, $05, $06, $0c

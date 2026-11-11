@@ -213,3 +213,19 @@ script_data:
     !byte 80, S_F                 ; BREAK
     !byte 0, 0
 }
+!if SCRIPT = 16 {
+    ; the street on the way to the office
+    !byte 30, S_R, 20, S_F
+    !byte 0, 0
+}
+!if SCRIPT = 17 {
+    ; a day to the rhythm game (-DQUICKMINI), then just watch it
+    !byte 30, S_R, 20, S_F
+    !byte 60, S_F
+    !byte 60, S_F
+    !byte 250, 0
+    !byte 30, S_R, 20, S_F
+    !byte 60, S_F
+    !byte 60, S_R, 15, S_R, 20, S_F
+    !byte 0, 0
+}
