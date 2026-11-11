@@ -1,0 +1,10 @@
+{
+  "name": "impostor-c64",
+  "title": "Definitely not an Impostor",
+  "author": "Teletype Games",
+  "desc": "Norman Reds lives the same day over and over - wake up, walk to the office, work, coffee, walk home, sleep - while his work productivity, impostor syndrome and burnout push and pull. Bit by bit he notices the seams of the simulation he lives in: nine steps of ASCENSION, a commute that glitches apart and, at the end, the choice to break the cycle. The C64 port of the TIC-80 game.",
+  "site": "https://git.teletypegames.org/games/impostor-c64",
+  "repo": "https://git.teletypegames.org/games/impostor-c64",
+  "license": "MIT",
+  "version": "1.0.0"
+}
