@@ -85,31 +85,148 @@ vi_line:
     sta SPRDATA+256,x
     dex
     bpl vi_line
-    lda #0
-    jsr cls_all
+    ; the raster interrupt: the CIA timers go quiet, the VIC calls
+    lda #$7f
+    sta $dc0d
+    sta $dd0d
+    lda $dc0d
+    lda $dd0d
+    lda #<irq
+    sta $fffe
+    lda #>irq
+    sta $ffff
     lda #$3b             ; bitmap mode on, 25 rows, display on
     sta SCRCTL
+    lda #1
+    sta $d01a            ; raster interrupts only
+    sta $d019
+    lda #0
+    jsr cls_all          ; (sets the hires layout and lets the IRQs in)
     rts
 
+; ============================================================
+; the raster interrupt: the scene rows are multicolor, the rest
+; hires; a layout is a list of (raster line, $d016) pairs ended
+; by the frame's own line (251), which raises frame_flag for the
+; main loop; each switch happens in the right border of the
+; last pixel line of the row before
+; ============================================================
+LAY_HIRES  = 0           ; everything hires
+LAY_SCENE  = 1           ; scene rows 0-16 multicolor
+LAY_DISC   = 2           ; ... but rows 3-10 hires: the question box
+LAY_TOILET = 3           ; only rows 8-16 multicolor: the circle
+MODE_MC    = $18
+MODE_HI    = $08
+
+irq:
+    pha
+    txa
+    pha
+    tya
+    pha
+    lda #1
+    sta $d019            ; acknowledge
+    ldx irq_i
+    lda irq_mode,x
+    bmi irq_frame
+    ldy irq_line,x
+    iny
+irq_wl:
+    cpy RASTER           ; wait for the next line ...
+    bne irq_wl
+    ldy #9               ; ... and on into its right border
+irq_wd:
+    dey
+    bne irq_wd
+    sta SCRCTL2
+    inx
+    bne irq_next
+irq_frame:
+    lda #MODE_HI         ; the frame ends hires
+    sta SCRCTL2
+    inc frame_flag
+    ldx #0
+irq_next:
+    stx irq_i
+    lda irq_line,x
+    sta RASTER
+    pla
+    tay
+    pla
+    tax
+    pla
 nmi_stub:
     rti
 
+; ---- A = LAY_*: the layout from the next frame on ----
+set_layout:
+    cmp layout
+    beq sly_done
+    sta layout
+    tax
+    lda laylo,x
+    sta ptr
+    lda layhi,x
+    sta ptr+1
+    sei
+    ldy #0
+    ldx #0
+sly_copy:
+    lda (ptr),y
+    sta irq_line,x
+    iny
+    lda (ptr),y
+    sta irq_mode,x
+    iny
+    inx
+    cmp #$ff
+    bne sly_copy
+    ldx #0
+    stx irq_i
+    lda irq_line
+    sta RASTER
+    lda #MODE_HI
+    sta SCRCTL2
+    cli
+sly_done:
+    rts
+
+laylo: !byte <lay_hires, <lay_scene, <lay_disc, <lay_toilet
+layhi: !byte >lay_hires, >lay_scene, >lay_disc, >lay_toilet
+lay_hires:  !byte 251, $ff
+lay_scene:  !byte 49, MODE_MC, 185, MODE_HI, 251, $ff
+lay_disc:   !byte 49, MODE_MC, 73, MODE_HI, 137, MODE_MC, 185, MODE_HI, 251, $ff
+lay_toilet: !byte 113, MODE_MC, 185, MODE_HI, 251, $ff
+
 ; ---- blank / show the display while a screen is built ----
+; (written whole: a read of $d011 below line 255 would bring the
+; raster's ninth bit along and push the interrupt line past 255)
 blank_on:
-    lda SCRCTL
-    and #$ef
+    lda #$2b             ; bitmap mode, 25 rows, display off
     sta SCRCTL
     rts
 
 blank_off:
-    lda SCRCTL
-    ora #$10
+    lda #$3b             ; ... display on
     sta SCRCTL
     rts
 
-; ---- clear the whole bitmap, fill the color matrix with A ----
+; ---- clear the whole bitmap and the color RAM, fill the color
+; matrix with A; the layout goes back to all hires ----
 cls_all:
-    ldx #0
+    pha
+    lda #LAY_HIRES
+    jsr set_layout
+    lda #0
+    tax
+ca_cram:
+    sta $d800,x
+    sta $d900,x
+    sta $da00,x
+    sta $dae8,x
+    inx
+    bne ca_cram
+    pla
 ca_col:
     sta SCRRAM,x
     sta SCRRAM+$100,x
@@ -629,6 +746,7 @@ scene_load:
     sta fr_h
     jmp fill_rect
 sl_go:
+    sta sl_id
     tax
     lda scnlo,x
     sta src
@@ -730,6 +848,38 @@ sl_cbyte:
     lda zt0
     cmp #SCN_H
     bne sl_crow
+    lda sl_id            ; the multicolor scenes: the color RAM too
+    cmp #BG_MMAN
+    bcs sl_done
+    lda #0
+    sta zt0
+sl_rrow:
+    ldy zt0
+    ldx #SCN_X
+    jsr cell_ptrs
+    jsr cram_ptr
+    ldy #0
+sl_rbyte:
+    jsr rle_get
+    sta (ptr3),y
+    iny
+    cpy #SCN_W
+    bne sl_rbyte
+    inc zt0
+    lda zt0
+    cmp #SCN_H
+    bne sl_rrow
+sl_done:
+    rts
+
+; ---- ptr3 = the color RAM cell under cdst ----
+cram_ptr:
+    lda cdst
+    sta ptr3
+    lda cdst+1
+    clc
+    adc #>($d800 - SCRRAM)
+    sta ptr3+1
     rts
 
 ; ---- next unpacked byte -> A (keeps X and Y) ----
@@ -798,10 +948,13 @@ scnhi: !byte >scn_bedroom, >scn_street, >scn_office, >scn_mman, >scn_dayswitch, 
 fig_draw:
     stx fd_col
     sty fd_row
-    tax
-    lda figlo,x
+    cmp #FIG_BIGNORMAN
+    beq fd_big
+    jmp mcfig_draw
+fd_big:
+    lda #<fig_bignorman
     sta src
-    lda fighi,x
+    lda #>fig_bignorman
     sta src+1
     ldy #0
     lda (src),y
@@ -925,6 +1078,329 @@ fd_rowend:
     beq fd_done
     jmp fd_rowlp
 fd_done:
+    rts
+
+; ============================================================
+; multicolor figures (gen_gfx.asm fig_*): A = figure, fd_col /
+; fd_row = its cell in the scene, fig_flags = FF_FLIP / FF_ECHO
+;
+; a cell is 0 (empty) or 1, 8 bytes of 4 two-bit pixels (%00 =
+; see-through, %01-%11 = its three colors), (c1 << 4) | c2, c3;
+; it is laid over the scene cell pixel by pixel, then the cell
+; takes the three colors that matter most (the figure's pixels
+; count four times) besides the black background, and every
+; other color goes to the closest of them
+; ============================================================
+mcfig_draw:
+    tax
+    lda figlo,x
+    sta src
+    lda fighi,x
+    sta src+1
+    ldy #0
+    lda (src),y
+    sta fd_w
+    iny
+    lda (src),y
+    sta fd_h
+    lda src
+    clc
+    adc #2
+    sta src
+    bcc mf_s
+    inc src+1
+mf_s:
+    lda #0
+    sta fd_r
+mf_rowlp:
+    lda #0
+    sta fd_c
+mf_celllp:
+    ldy #0
+    lda (src),y
+    sta fd_kind
+    jsr fig_inc1
+    lda fd_kind
+    bne mf_have
+    jmp mf_next
+mf_have:
+    ldx #fbits - fbuf    ; the pixels, flipped if asked
+    jsr fig_read8
+    ldy #0
+    lda (src),y
+    sta fd_colors
+    iny
+    lda (src),y
+    and #15
+    sta mf_c3
+    lda src
+    clc
+    adc #2
+    sta src
+    bcc mf_t
+    inc src+1
+mf_t:
+    lda fig_flags
+    and #FF_FLIP
+    beq mf_noflip
+    lda fd_h
+    sec
+    sbc fd_r
+    sec
+    sbc #1
+    jmp mf_trow
+mf_noflip:
+    lda fd_r
+mf_trow:
+    clc
+    adc fd_row
+    cmp #SCN_H
+    bcs mf_next
+    tay
+    lda fd_col
+    clc
+    adc fd_c
+    cmp #SCN_W
+    bcs mf_next
+    adc #SCN_X
+    tax
+    jsr cell_ptrs
+    jsr cram_ptr
+    ; the figure's colors (%01, %10, %11), remapped for the echo
+    lda fd_colors
+    lsr
+    lsr
+    lsr
+    lsr
+    sta mf_fcol+1
+    lda fd_colors
+    and #15
+    sta mf_fcol+2
+    lda mf_c3
+    sta mf_fcol+3
+    lda fig_flags
+    and #FF_ECHO
+    beq mf_merge
+    ldx #3
+mf_echo:
+    ldy mf_fcol,x
+    lda echotbl,y
+    sta mf_fcol,x
+    dex
+    bne mf_echo
+mf_merge:
+    jsr mc_merge
+mf_next:
+    inc fd_c
+    lda fd_c
+    cmp fd_w
+    beq mf_rowend
+    jmp mf_celllp
+mf_rowend:
+    inc fd_r
+    lda fd_r
+    cmp fd_h
+    beq mf_done
+    jmp mf_rowlp
+mf_done:
+    rts
+
+; ---- lay the figure cell (fbits, mf_fcol) over the multicolor
+; cell at dst / cdst / ptr3 ----
+mc_merge:
+    ; the scene cell's colors: %00 black, %01, %10, %11
+    lda #0
+    sta mf_bcol
+    ldy #0
+    lda (cdst),y
+    pha
+    lsr
+    lsr
+    lsr
+    lsr
+    sta mf_bcol+1
+    pla
+    and #15
+    sta mf_bcol+2
+    lda (ptr3),y
+    and #15
+    sta mf_bcol+3
+    ldx #15              ; no color counted yet
+    lda #0
+mq_clr:
+    sta mf_cnt,x
+    dex
+    bpl mq_clr
+    ; every pixel: the figure's if it is there, else the scene's
+    ldx #0               ; pixel 0-31
+    ldy #0               ; row
+mq_row:
+    lda (dst),y
+    sta zt0
+    lda fbits,y
+    sta zt1
+    sty zt2
+    lda #4
+    sta zt3
+mq_px:
+    lda #0
+    asl zt1
+    rol
+    asl zt1
+    rol
+    beq mq_scene
+    tay                  ; a figure pixel: weight 4
+    lda mf_fcol,y
+    sta mf_px,x
+    tay
+    lda mf_cnt,y
+    clc
+    adc #4
+    sta mf_cnt,y
+    asl zt0
+    asl zt0
+    jmp mq_pnext
+mq_scene:
+    asl zt0
+    rol
+    asl zt0
+    rol
+    tay
+    lda mf_bcol,y
+    sta mf_px,x
+    tay
+    lda mf_cnt,y
+    clc
+    adc #1
+    sta mf_cnt,y
+mq_pnext:
+    inx
+    dec zt3
+    bne mq_px
+    ldy zt2
+    iny
+    cpy #8
+    bne mq_row
+    ; the three heaviest colors besides black
+    lda #0
+    sta mf_cnt           ; black is free: never picked
+    ldy #1
+mq_pick:
+    lda #0
+    sta zt4              ; best count
+    sta zt5              ; best color
+    ldx #15
+mq_best:
+    lda mf_cnt,x
+    beq mq_bn
+    cmp zt4
+    bcc mq_bn
+    sta zt4
+    stx zt5
+mq_bn:
+    dex
+    bne mq_best
+    lda zt5
+    sta mf_out,y
+    beq mq_pnone
+    tax
+    lda #0
+    sta mf_cnt,x         ; picked: out of the race
+mq_pnone:
+    iny
+    cpy #4
+    bne mq_pick
+    lda #0
+    sta mf_out
+    ; every color's code: its own slot, or the closest one
+    ldx #15
+mq_map:
+    stx zt5
+    lda #0               ; black
+    cpx #0
+    beq mq_mset
+    ldy #3
+mq_own:
+    txa
+    cmp mf_out,y
+    beq mq_owny
+    dey
+    bne mq_own
+    ; the closest of the four (black and the three picked)
+    txa
+    asl
+    asl
+    asl
+    asl
+    sta zt6              ; this color's row in coldist
+    lda #$ff
+    sta zt4
+    lda #0
+    sta zt7
+    ldy #0
+mq_near:
+    lda mf_out,y
+    bne mq_nc
+    cpy #0
+    bne mq_nnext         ; an empty slot
+mq_nc:
+    clc
+    adc zt6
+    tax
+    lda coldist,x
+    cmp zt4
+    bcs mq_nnext
+    sta zt4
+    sty zt7
+mq_nnext:
+    iny
+    cpy #4
+    bne mq_near
+    lda zt7
+    jmp mq_mset
+mq_owny:
+    tya
+mq_mset:
+    ldx zt5
+    sta mf_code,x
+    dex
+    bpl mq_map
+    ; encode the cell
+    ldx #0
+    ldy #0
+mq_enc:
+    lda #0
+    sta zt0
+    lda #4
+    sta zt3
+mq_ep:
+    asl zt0
+    asl zt0
+    stx zt1
+    lda mf_px,x
+    tax
+    lda mf_code,x
+    ora zt0
+    sta zt0
+    ldx zt1
+    inx
+    dec zt3
+    bne mq_ep
+    lda zt0
+    sta (dst),y
+    iny
+    cpy #8
+    bne mq_enc
+    lda mf_out+1
+    asl
+    asl
+    asl
+    asl
+    ora mf_out+2
+    ldy #0
+    sta (cdst),y
+    lda mf_out+3
+    sta (ptr3),y
     rts
 
 ; ---- a figure anywhere on the screen: X = absolute column ----
@@ -1224,10 +1700,21 @@ ss_row:
     sta ptr
     lda shrowhi,x
     sta ptr+1
+    jsr cram_ptr
+    lda shrowlo,x
+    clc
+    adc #<(CRSHADOW - COLSHADOW)
+    sta ptr2
+    lda shrowhi,x
+    adc #>(CRSHADOW - COLSHADOW)
+    sta ptr2+1
     ldy #SCN_W-1
 ss_cell:
     lda (cdst),y
     sta (ptr),y
+    lda (ptr3),y
+    and #15
+    sta (ptr2),y
     dey
     bpl ss_cell
     ldx zt0
@@ -1353,10 +1840,18 @@ fa_row:
     lda scrrowhi,x
     adc #0
     sta cdst+1
+    jsr cram_ptr
     lda shrowlo,x
     sta ptr
     lda shrowhi,x
     sta ptr+1
+    lda shrowlo,x
+    clc
+    adc #<(CRSHADOW - COLSHADOW)
+    sta src
+    lda shrowhi,x
+    adc #>(CRSHADOW - COLSHADOW)
+    sta src+1
     ldy #SCN_W-1
 fa_cell:
     lda (ptr2),y
@@ -1365,12 +1860,15 @@ fa_cell:
     bcc fa_in
     lda #0
     sta (cdst),y
+    sta (ptr3),y
     dey
     bpl fa_cell
     bmi fa_rowend
 fa_in:
     lda (ptr),y
     sta (cdst),y
+    lda (src),y
+    sta (ptr3),y
     dey
     bpl fa_cell
 fa_rowend:
@@ -1587,6 +2085,12 @@ fk_rlp:
     lda fk_val,x
     ldy #0
     sta (ptr),y
+    lda ptr+1
+    clc
+    adc #>($d800 - SCRRAM)
+    sta ptr+1
+    lda fk_cr,x
+    sta (ptr),y
     cpx #0
     bne fk_rlp
     stx fk_n
@@ -1626,10 +2130,14 @@ fk_r:
     ldy #0
     lda (cdst),y
     sta fk_val,x
+    jsr cram_ptr
+    lda (ptr3),y
+    sta fk_cr,x
     inc fk_n
     jsr rand8
     and #15
     sta zt0
+    sta (ptr3),y
     asl
     asl
     asl
@@ -1669,6 +2177,16 @@ fu_lo:
     ldy SCRRAM+$100,x
     lda fadebyte,y
     sta SCRRAM+$100,x
+    lda $d800,x
+    and #15
+    tay
+    lda fadetbl,y
+    sta $d800,x
+    lda $d900,x
+    and #15
+    tay
+    lda fadetbl,y
+    sta $d900,x
     inx
     bne fu_lo
     rts
@@ -1681,6 +2199,16 @@ fu_hi2:
     ldy SCRRAM+$2e8,x
     lda fadebyte,y
     sta SCRRAM+$2e8,x
+    lda $da00,x
+    and #15
+    tay
+    lda fadetbl,y
+    sta $da00,x
+    lda $dae8,x
+    and #15
+    tay
+    lda fadetbl,y
+    sta $dae8,x
     inx
     bne fu_hi2
     ldx #7               ; the sprites sink with the screen
@@ -1765,6 +2293,7 @@ rle_cnt: !byte 0
 rle_mode: !byte 0
 rle_val: !byte 0
 rle_y:   !byte 0
+sl_id:   !byte 0
 sl_dict: !word 0
 fd_col:  !byte 0
 fd_row:  !byte 0
@@ -1775,6 +2304,13 @@ fd_c:    !byte 0
 fd_kind: !byte 0
 fd_colors: !byte 0
 fig_flags: !byte 0
+mf_c3:   !byte 0
+mf_fcol: !fill 4, 0
+mf_bcol: !fill 4, 0
+mf_out:  !fill 4, 0
+mf_cnt:  !fill 16, 0
+mf_code: !fill 16, 0
+mf_px:   !fill 32, 0
 fig_x0:  !byte SCN_X
 fig_wmax: !byte SCN_W
 fig_hmax: !byte SCN_H
@@ -1805,12 +2341,19 @@ flick_on: !byte 0
 fk_tick: !byte 0
 fk_n:    !byte 0
 fk_lo:   !fill 8, 0
+fk_cr:   !fill 8, 0
 fk_hi:   !fill 8, 0
 fk_val:  !fill 8, 0
 fading:  !byte 0
+layout:  !byte $ff
+irq_i:   !byte 0
+frame_flag: !byte 0
+irq_line: !fill 8, 0
+irq_mode: !fill 8, 0
+CRSHADOW = crshadow
+crshadow: !fill SCN_W * SCN_H, 0
 fadecnt: !byte 0
 fadehalf: !byte 0
-fadevec: !word 0
 fadebyte: !fill 256, 0
 gl_lo:   !fill GLMAX, 0
 gl_hi:   !fill GLMAX, 0

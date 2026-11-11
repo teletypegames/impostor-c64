@@ -1,5 +1,5 @@
 ; -----------------------------------------------------------
-; main.asm - DEFINITELY NOT AN IMPOSTOR for the C64
+; main.asm - DEFINITELY NOT AN IMPOSTOR C64
 ;   a port of the TIC-80 game: norman reds lives the same
 ;   day over and over - wake up, walk to the office, work,
 ;   coffee, walk home, sleep - while three meters (work
@@ -26,7 +26,7 @@
 ;   ending.asm    - level-up flash, game over, good ending,
 ;                   to be continued
 ;   sound.asm     - single-voice SFX driver
-;   music.asm     - two-voice music player
+;   music.asm     - three-voice music player (the original's tracks)
 ;   gen_gfx.asm   - generated: scenes, figures, art, arrows
 ;   gen_text.asm  - generated: discussions, the long texts
 ;
@@ -124,16 +124,12 @@ main:
 call_update:
     jmp (updvec)         ; each update runs one frame, ends with rts
 
-; ---- wait for raster line RAS_SYNC (leave it first, so a
-; fast update cannot run twice in the same frame) ----
+; ---- wait for the next frame (a slow update catches up) ----
 wait_frame:
-    lda RASTER
-    cmp #RAS_SYNC
+    lda frame_flag       ; the raster interrupt raises it at line 251
     beq wait_frame
-wf_hit:
-    lda RASTER
-    cmp #RAS_SYNC
-    bne wf_hit
+    lda #0
+    sta frame_flag
     rts
 
 ; ---- a meter broke norman, or the days ran out: game over ----

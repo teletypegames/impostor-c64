@@ -34,7 +34,7 @@ build: $(TARGET)
 $(TARGET): $(SRCS)
 	$(ASM) -f cbm -o $(TARGET) $(SRC)
 
-# the generated sources (gen_gfx.asm, gen_text.asm) come from the
+# the generated sources (gen_gfx.asm, gen_text.asm, gen_music.asm) come from the
 # TIC-80 assets in tools/assets; they are committed, so a build
 # needs only ACME - rerun this after changing the tools
 data:

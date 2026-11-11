@@ -465,18 +465,13 @@ cg_reset:
     sta cg_level
     jmp glitch_hide
 
-; ---- the office song drags with the glitch ----
+; ---- the office song in the office and on the way home: the
+; original asks for TIC-80 speed 6, slower with the glitch ----
 cg_music_slow:
-    lda #0
-    sta mus_slow
     jsr cg_level_get
-    cmp #2
-    bcc cms_done
-    sec
-    sbc #1
-    asl
+    tax
+    lda cg_slow,x
     sta mus_slow
-cms_done:
     rts
 
 ; ============================================================

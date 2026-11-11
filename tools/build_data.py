@@ -10,8 +10,10 @@ import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import content  # noqa: E402
-from gfx import (Canvas, NONE, PAL2C64, cells_of, lua_rle_arrays, load_tic,  # noqa: E402
-                 opaque_cell, render_map, render_rle, sprite_cell, cell_pixels)
+import ticmusic  # noqa: E402
+from gfx import (Canvas, NONE, PAL2C64, cdist, cells_of, lua_rle_arrays, load_tic,  # noqa: E402
+                 mc_figure_cell, mc_scene_cell, opaque_cell, render_map, render_rle, sprite_cell,
+                 cell_pixels)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, 'tools', 'assets')
@@ -150,6 +152,24 @@ def build_figure(sprites, parts, scale=1):
     return cv, ox, oy
 
 
+def emit_mc_figure(asm, name, cv):
+    """A multicolor figure: w, h, then per cell 0 (empty) or 1, 8 bytes
+    (%00 = see-through), (c1 << 4) | c2, c3."""
+    w, h = cv.w // 8, cv.h // 8
+    asm.label('fig_' + name)
+    data = [w, h]
+    for cy in range(h):
+        for cx in range(w):
+            c = mc_figure_cell(cell_pixels(cv, cx, cy))
+            if c is None:
+                data.append(0)
+            else:
+                bits, c12, c3 = c
+                data += [1] + bits + [c12, c3]
+    asm.bytes(data)
+    return len(data)
+
+
 def emit_figure(asm, name, cv):
     w, h = cv.w // 8, cv.h // 8
     asm.label('fig_' + name)
@@ -282,16 +302,33 @@ def build_gfx():
     asm = Asm('gen_gfx.asm - scenes, figures, images, art, arrows, clock')
     total = 0
 
-    # ---- full scenes: a cell dictionary, then the packed cell indexes
-    # (17 x 30) and colors (17 x 30) ----
-    scenes = [('bedroom', render_map(tiles, mp, 0)),
-              ('street', render_map(tiles, mp, 30)),
-              ('office', render_map(tiles, mp, 60))]
+    # ---- the map scenes, multicolor: a dictionary of their distinct
+    # cells (a count byte, 8 bytes each), then one packed stream of the
+    # 17 x 30 cell indexes, colors (%01 / %10) and color RAM (%11) ----
+    for name, cv in (('bedroom', render_map(tiles, mp, 0)), ('street', render_map(tiles, mp, 30)),
+                     ('office', render_map(tiles, mp, 60))):
+        cells, screen, colram = [], [], []
+        for row in cells_of(cv):
+            for px in row:
+                data, sc, cr = mc_scene_cell(px)
+                cells.append(tuple(data))
+                screen.append(sc)
+                colram.append(cr)
+        uniq = sorted(set(cells))
+        assert len(uniq) <= 256, name
+        index = [uniq.index(c) for c in cells]
+        data = [len(uniq) & 0xff] + [b for c in uniq for b in c] + rle_pack(index + screen + colram)
+        asm.label('scn_' + name)
+        asm.bytes(data)
+        total += len(data)
+        print('scene %-10s %5d bytes (%d cells, multicolor)' % (name, len(data), len(uniq)))
+
+    # ---- the full-screen images, hires: the same dictionary, then the
+    # indexes and the colors (ink << 4 | paper) ----
     mm = lua_rle_arrays(os.path.join(ASSETS, 'screen.mysterious_man.lua'))
     ddr = lua_rle_arrays(os.path.join(ASSETS, 'window.minigame.ddr.lua'))
-    scenes += [('mman', render_rle(*mm[0])), ('dayswitch', render_rle(*mm[1])),
-               ('ddrbg', render_rle(*ddr[0]))]
-    for name, cv in scenes:
+    for name, cv in (('mman', render_rle(*mm[0])), ('dayswitch', render_rle(*mm[1])),
+                     ('ddrbg', render_rle(*ddr[0]))):
         cells, colors = [], []
         for row in cells_of(cv):
             for px in row:
@@ -305,25 +342,29 @@ def build_gfx():
         asm.label('scn_' + name)
         asm.bytes(data)
         total += len(data)
-        print('scene %-10s %5d bytes (%d cells)' % (name, len(data), len(uniq)))
+        print('scene %-10s %5d bytes (%d cells, hires)' % (name, len(data), len(uniq)))
+
+    # ---- how far apart two C64 colors look (0-255), for the merges ----
+    mx = max(cdist(a, b) for a in range(16) for b in range(16))
+    asm.label('coldist')
+    asm.bytes([int(round(255 * (cdist(a, b) / mx) ** 0.5)) for a in range(16) for b in range(16)])
 
     # ---- figures ----
     origins = {}
     for i, (name, parts, ycorr) in enumerate(FIGDEFS):
         cv, ox, oy = build_figure(sprites, parts)
         origins[name] = (ox, oy, ycorr)
-        total += emit_figure(asm, name, cv)
+        total += emit_mc_figure(asm, name, cv)
         asm.const('FIG_' + name.upper(), i)
     cv, _, _ = build_figure(sprites, NORMAN, scale=4)
     total += emit_figure(asm, 'bignorman', cv)
-    asm.const('FIG_BIGNORMAN', len(FIGDEFS))
-    names = ['fig_' + n for n, _, _ in FIGDEFS] + ['fig_bignorman']
+    names = ['fig_' + n for n, _, _ in FIGDEFS]
     asm.label('figlo')
     asm.raw('    !byte ' + ', '.join('<' + n for n in names))
     asm.label('fighi')
     asm.raw('    !byte ' + ', '.join('>' + n for n in names))
     asm.label('figycorr')
-    asm.bytes([origins[n][2] for n, _, _ in FIGDEFS] + [0])
+    asm.bytes([origins[n][2] for n, _, _ in FIGDEFS])
 
     # ---- fixed placements (scene-relative cells) ----
     fixed = {
@@ -475,6 +516,69 @@ def build_text():
     print('text total %d bytes' % total)
 
 
+# ------------------------------------------------------------ music
+
+# the original's instruments (its SFX slots) as SID instruments
+MUS_INSTR = {59: 'INS_SINE', 56: 'INS_PULSE', 61: 'INS_NOISE', 60: 'INS_SINE'}
+# TIC-80 track -> (MUS_* name, frames per row at 50 Hz)
+MUS_TRACKS = [(0, 'work', 4), (1, 'ddr', 5), (2, 'mystery', 5)]
+MREST, MTIE = 0, 1
+
+
+def build_music():
+    pats, tracks, sfx = ticmusic.load(os.path.join(ASSETS, 'impostor.assets.lua'))
+    asm = Asm('gen_music.asm - the original\'s three TIC-80 tracks, note for note')
+    rows = {}
+    for t, name, speed in MUS_TRACKS:
+        tr = tracks[t]
+        nframes = len([f for f in tr['frames'] if any(f)])
+        length = nframes * tr['rows']
+        evs = ticmusic.events(pats, tr)
+        used = sorted({e[0] for e in evs})
+        chans = [0] + [c for c in used if c != 0]
+        chans = (chans + [None, None, None])[:3]
+        asm.label('tune_%s' % name)
+        asm.raw('    !byte %d' % speed)
+        insts, plabels = [], []
+        for si, c in enumerate(chans):
+            pl = 'pat_%s_%d' % (name, si)
+            plabels.append(pl)
+            mine = sorted([(fi * tr['rows'] + r, n, s) for cc, fi, r, n, s, *_ in evs if cc == c])
+            ins = 'INS_SINE'
+            for _, n, s in mine:
+                if n != 'stop':
+                    ins = MUS_INSTR.get(s, 'INS_SINE')
+                    break
+            insts.append(ins)
+            data = []
+
+            def put(code, dur):
+                first = True
+                while dur > 0:
+                    d = min(dur, 255)
+                    data.extend([code if first else (MTIE if code not in (MREST,) else MREST), d])
+                    first = False
+                    dur -= d
+            t0 = 0
+            if not mine or mine[0][0] > 0:
+                put(MREST, (mine[0][0] if mine else length))
+            for i, (tt, n, s) in enumerate(mine):
+                end = mine[i + 1][0] if i + 1 < len(mine) else length
+                if end <= tt:
+                    continue
+                code = MREST if n == 'stop' else ((n // 12 + 1) << 4) | (n % 12)
+                put(code, end - tt)
+            rows[pl] = data + [0xff]
+        asm.raw('    !byte ' + ', '.join(insts))
+        asm.raw('    !word ' + ', '.join(plabels))
+    for pl, data in rows.items():
+        asm.label(pl)
+        asm.bytes(data)
+    asm.save(os.path.join(ROOT, 'gen_music.asm'))
+    print('music: %d bytes' % sum(len(d) for d in rows.values()))
+
+
 if __name__ == '__main__':
     build_gfx()
     build_text()
+    build_music()

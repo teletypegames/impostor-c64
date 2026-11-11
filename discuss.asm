@@ -30,6 +30,12 @@ disc_start:
     jsr scene_draw
     jsr shadow_save
     jsr ds_show
+    lda cur_screen       ; multicolor scene, the box rows hires
+    cmp #SC_WORK
+    bcs ds_lay
+    lda #LAY_DISC
+    jsr set_layout
+ds_lay:
     jsr blank_off
     +setupd disc_update
     rts

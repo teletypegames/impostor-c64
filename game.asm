@@ -155,6 +155,8 @@ gr_scene:
     lda stat_active
     beq gr_normal
     jsr toilet_draw
+    lda #LAY_TOILET
+    jsr set_layout
     jmp gr_done
 gr_normal:
     jsr scene_draw
@@ -162,6 +164,11 @@ gr_normal:
     jsr hud_draw
     jsr dec_build
     jsr dec_draw
+    lda cur_screen       ; the map scenes are multicolor
+    cmp #SC_WORK
+    bcs gr_done
+    lda #LAY_SCENE
+    jsr set_layout
 gr_done:
     jsr blank_off
     rts
@@ -1197,7 +1204,7 @@ toilet_draw:
     lda #8
     sta focus_r
     jsr focus_center
-    jsr focus_apply
+    jsr focus_apply      ; only the circle's rows stay multicolor
     ; day N
     lda day
     sta numval
@@ -1213,11 +1220,41 @@ toilet_draw:
     jsr print_at
     +center 3, LGREY << 4, txt_toilet1
     +center 4, LGREY << 4, txt_toilet2
-    ; the three meters
+    ; ASCENSION, centered
+    lda asc_level
+    beq td_noasc
+    asl
+    sta zt5
+    lda #41
+    sec
+    sbc zt5
+    lsr
+    sta zt6              ; first column
     lda #0
     sta zt5
-td_m:
+td_asc:
+    lda #WHITE << 4
+    sta pcolor
+    lda zt5
+    asl
+    clc
+    adc zt6
+    tax
+    ldy #6
+    jsr cell_ptrs
     ldx zt5
+    lda txt_ascension,x
+    jsr put_char
+    inc zt5
+    lda zt5
+    cmp asc_level
+    bne td_asc
+td_noasc:
+    ; the three meters under the scene
+    lda #0
+    sta td_i
+td_m:
+    ldx td_i
     lda tmlabello,x
     sta txt
     lda tmlabelhi,x
@@ -1230,48 +1267,25 @@ td_m:
     pha
     lda tmrow,x
     tay
-    ldx #1
     pla
-    jsr print_at
-    ldx zt5
+    jsr print_center
+    ldx td_i
     jsr tbar_draw
-    inc zt5
-    lda zt5
+    inc td_i
+    lda td_i
     cmp #3
     bne td_m
-    ; ASCENSION
-    lda asc_level
-    beq td_noasc
-    lda #0
-    sta zt5
-td_asc:
-    lda #WHITE << 4
-    sta pcolor
-    lda zt5
-    asl
-    clc
-    adc #6
-    tax
-    ldy #15
-    jsr cell_ptrs
-    ldx zt5
-    lda txt_ascension,x
-    jsr put_char
-    inc zt5
-    lda zt5
-    cmp asc_level
-    bne td_asc
-td_noasc:
     lda asc_level
     cmp #8
     bne td_done
     lda #1
     sta flick_on
 td_done:
-    +center 23, DGREY << 4, txt_firecont
+    +center 24, DGREY << 4, txt_firecont
     rts
 
-; ---- a stat bar: X = meter; -2% left, the combo % right ----
+; ---- a stat bar: X = meter; -2% left, the combo % right,
+; 20 cells (160 px for 0-1000) on the row under its label ----
 tbar_draw:
     stx bd_m
     lda tmrow,x
@@ -1283,7 +1297,7 @@ tbar_draw:
     sta txt
     lda #>txt_decay
     sta txt+1
-    ldx #1
+    ldx #4
     lda #LBLUE << 4
     jsr print_at
     jsr combo_step
@@ -1303,25 +1317,25 @@ tb_ism:
     lda cismhi,x
     sta txt+1
 tb_pct:
-    ldx #16
+    ldx #29
     ldy zt6
     lda #LBLUE << 4
     jsr print_at
-    ; the bar: 10 cells from column 5 on the same row
+    ; the bar: value * 16 / 100 pixels
     ldx bd_m
     lda mlo,x
     sta divlo
     lda mhi,x
     sta divhi
-    asl divlo            ; * 16 / 200 = * 80 / 1000
-    rol divhi
     asl divlo
     rol divhi
     asl divlo
     rol divhi
     asl divlo
     rol divhi
-    lda #200
+    asl divlo
+    rol divhi
+    lda #100
     jsr div16
     lda divlo
     sta zt3
@@ -1333,7 +1347,7 @@ tb_pct:
     asl
     ora #C_METERBG
     sta zt4
-    ldx #5
+    ldx #8
     ldy zt6
     jsr cell_ptrs
     lda #0
@@ -1371,11 +1385,11 @@ tb_rows:
     jsr adv_cell
     inc zt5x
     lda zt5x
-    cmp #10
+    cmp #20
     bne tb_cell
     rts
 
-tmrow: !byte 6, 9, 12
+tmrow: !byte 17, 19, 21
 tmlabello: !byte <txt_wpm_long, <txt_ism_long, <txt_bm_long
 tmlabelhi: !byte >txt_wpm_long, >txt_ism_long, >txt_bm_long
 ; the combo percentages for combo 0, 1, 2, 3, 4+
@@ -1437,3 +1451,4 @@ bd_hi:    !byte 0
 bd_fl:    !byte 0
 bd_col:   !byte 0
 zt5x:     !byte 0
+td_i:     !byte 0

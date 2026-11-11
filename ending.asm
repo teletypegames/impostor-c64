@@ -301,7 +301,6 @@ txt_telnet2:  !scr "teletypegames.org  2324", 0
 txt_tomenu:   !scr "Press fire to return to menu", 0
 
 ; ---- variables ----
-flret:    !word 0
 fl_t:     !byte 0
 fl_col:   !byte 0
 go_reason: !byte 0

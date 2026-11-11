@@ -206,3 +206,78 @@ def preview_scene(cv, path, figures=()):
                     c = ink if data[y] & (0x80 >> x) else paper
                     im.putpixel((cx * 8 + x, cy * 8 + y), C64_RGB[c])
     im.resize((cv.w * 3, cv.h * 3), Image.NEAREST).save(path)
+
+
+# ------------------------------------------------------------ multicolor
+
+def mc_half(px, transparent=False):
+    """An 8x8 cell of C64 colors (NONE = see-through) -> 4x8 multicolor pixels.
+    Of two different neighbours the rarer one in the cell is kept: it is the detail
+    (an eye, an outline, a stripe); an opaque pixel always beats a see-through one."""
+    flat = [c for row in px for c in row if c != NONE]
+    out = []
+    for row in px:
+        r = []
+        for x in range(4):
+            a, b = row[2 * x], row[2 * x + 1]
+            if a == b:
+                r.append(a)
+            elif a == NONE or b == NONE:
+                r.append(b if a == NONE else a)
+            else:
+                r.append(a if flat.count(a) <= flat.count(b) else b)
+        out.append(r)
+    return out
+
+
+def mc_palette(pixels, free, fixed=()):
+    """Up to `free` colors for the pixels (besides the fixed ones), least error."""
+    counts = {}
+    for c in pixels:
+        if c != NONE and c not in fixed:
+            counts[c] = counts.get(c, 0) + 1
+    cols = sorted(counts, key=lambda c: -counts[c])
+    if len(cols) <= free:
+        return list(cols)
+    best = None
+    for combo in itertools.combinations(cols, free):
+        pal = list(fixed) + list(combo)
+        err = sum(n * min(cdist(c, p) for p in pal) for c, n in counts.items())
+        if best is None or err < best[0]:
+            best = (err, list(combo))
+    return best[1]
+
+
+def mc_scene_cell(px):
+    """-> (8 bytes, screen byte, color RAM byte); black is the %00 background."""
+    half = mc_half(px)
+    flat = [c for row in half for c in row]
+    pal = mc_palette(flat, 3, fixed=(0,))
+    full = [0] + pal
+    data = []
+    for row in half:
+        v = 0
+        for c in row:
+            q = min(full, key=lambda p: cdist(c, p))
+            v = (v << 2) | full.index(q)
+        data.append(v)
+    pal = pal + [0] * (3 - len(pal))
+    return data, (pal[0] << 4) | pal[1], pal[2]
+
+
+def mc_figure_cell(px):
+    """-> None (empty) or (8 bytes with %00 = see-through, (c1 << 4) | c2, c3)."""
+    half = mc_half(px, transparent=True)
+    flat = [c for row in half for c in row if c != NONE]
+    if not flat:
+        return None
+    pal = mc_palette(flat, 3)
+    data = []
+    for row in half:
+        v = 0
+        for c in row:
+            code = 0 if c == NONE else 1 + pal.index(min(pal, key=lambda p: cdist(c, p)))
+            v = (v << 2) | code
+        data.append(v)
+    pal = pal + [0] * (3 - len(pal))
+    return data, (pal[0] << 4) | pal[1], pal[2]

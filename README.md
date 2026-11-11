@@ -1,4 +1,4 @@
-# Definitely not an Impostor - C64
+# Definitely not an Impostor C64
 
 The Commodore 64 port of [Definitely not an Impostor](../impostor), the
 TIC-80 game (ACME + VICE, in the footsteps of
@@ -50,13 +50,20 @@ start at any ascension, the end screen).
 
 ## The port
 
-- **Screen:** hires bitmap. The TIC-80's 240x136 scene sits 1:1 in the
-  top 30x17 cells; the HUD (meters, clock, ASCENSION) and the decision
-  bar take the rows under it. Every 8x8 cell has two colors, so the
-  original's art is converted cell by cell (`tools/build_data.py`).
-- **Figures:** the people are composited into the cells under them: of
-  the figure's two colors and the scene's two, the two covering most
-  pixels win. Norman's echo wears cyan instead of white.
+- **Screen:** the scenes are a multicolor bitmap - 4 colors in every
+  4x8 cell (black + 3), so the people keep the colors of the original -
+  while the HUD, the decision bar and every text are hires: a raster
+  interrupt switches the mode row by row (the scene rows 0-16, the
+  question box of a discussion hires again, at the toilet only the
+  circle's rows multicolor). The TIC-80's 240x136 scene sits in the
+  top 30x17 cells, two of its pixels to one multicolor pixel (of two
+  different ones the rarer in the cell stays: the eye, the outline,
+  the stripe). The mysterious man, the day card and the work screen
+  are hires pictures. The art is converted by `tools/build_data.py`.
+- **Figures:** the people are laid over the scene pixel by pixel at
+  run time; every cell then takes the three colors that matter most
+  (the figure's pixels count four times) besides black. Norman's echo
+  wears cyan instead of white.
 - **Effects:** the focus circle (the alarm and the sleep minigames, the
   toilet) recolors the scene cells from a shadow copy; the glitch puts
   random vertical stripes into the bitmap and takes them back next
@@ -66,9 +73,14 @@ start at any ascension, the end screen).
   their bars in the HUD; the work (DDR) arrows are hardware sprites.
 - **Texts:** the mysterious man's words and the brief are typed out
   line by line; the discussions are the original's, word for word.
-- **Sound:** a single-voice SFX driver and the two-voice music player
-  of Blessing of Ra with three new tunes (the office, the work, the
-  mystery); the commute glitch drags the office song.
+- **Sound:** the original's three TIC-80 tracks (the office, the work,
+  the mystery), converted note for note from the cart
+  (`tools/ticmusic.py`), on a three-voice player; the instruments
+  follow the original's SFX (its smooth wave as a triangle, the noise
+  drum, the fading pulse). As on the TIC-80, a sound effect takes the
+  first voice while it sounds, and the effects keep the original's
+  pitches; the commute glitch drags the office song as the original's
+  speed parameter does.
 - **Timing:** PAL, 50 frames a second; the frame-counted timings and
   speeds of the original (60 Hz) are scaled to it.
 
@@ -78,7 +90,7 @@ start at any ascension, the end screen).
 make deps       # macOS: brew install acme vice
 make build      # -> impostor-c64.prg
 make run        # build + launch in x64sc
-make data       # regenerate gen_gfx.asm + gen_text.asm (Python 3 + Pillow)
+make data       # regenerate gen_gfx.asm, gen_text.asm, gen_music.asm (Python 3 + Pillow)
 ```
 
 The generated sources are committed, so a build needs only ACME.
@@ -119,14 +131,16 @@ x64sc -default -autostartprgmode 1 -limitcycles 30000000 \
 - `ending.asm` - level-up flash, game over, good ending, to be
   continued
 - `sound.asm` / `music.asm` - SFX driver and music player
+- `gen_music.asm` - generated: the original's tracks
 - `script.asm` - scripted input for test builds
 - `gen_gfx.asm` / `gen_text.asm` - generated data
-- `tools/` - the converter (`build_data.py`, `gfx.py`), the texts
+- `tools/` - the converter (`build_data.py`, `gfx.py`, `ticmusic.py`), the texts
   (`content.py`) and the original's TIC-80 assets (`tools/assets`)
 
 ## Memory
 
-BASIC and KERNAL are banked out. The program runs from `$0801` to below
-`$ca00`; the VIC looks at bank 3: sprites at `$ca00`, the color matrix at
+BASIC and KERNAL are banked out; the raster interrupt (the mode splits
+and the frame sync) comes through `$fffe`. The program runs from `$0801`
+to below `$ca00`; the VIC looks at bank 3: sprites at `$ca00`, the color matrix at
 `$cc00`, the bitmap under the KERNAL at `$e000`. The ROM font is copied
 to `$0400`, the focus's shadow colors live at `$0200`.

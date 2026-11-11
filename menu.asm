@@ -133,6 +133,7 @@ mi_notest:
     ldy #1
     lda #C_ITEM << 4
     jsr print_big_center
+    +print 29, 2, C_ACCENT << 4, txt_c64
     ; norman, big, on the left
     lda #0
     sta fig_flags
@@ -312,6 +313,7 @@ ml_exit:     !scr "Exit", 0
 txt_subtitle: !scr "Definitely not an", 0
 txt_test:    !scr "[TEST]", 0
 txt_impostor: !scr "IMPOSTOR", 0
+txt_c64:     !scr "C64", 0
 txt_ttg3:    !scr "TTG", 0
 
 ; ============================================================

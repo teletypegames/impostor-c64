@@ -2,7 +2,7 @@
 ; sound.asm - single-voice SFX driver (blessing of ra's):
 ; each effect is a waveform + start pitch + per-frame pitch
 ; slide + duration, played on SID voice 1; the alarm clock
-; also warbles (its pitch flips every few frames)
+; and the bloop also ring in bursts (the gate opens and shuts)
 ; -----------------------------------------------------------
 
 sfx_init:
@@ -44,8 +44,8 @@ sfx_play_at:
     sta sfx_ctrl
     lda sfxslide,x
     sta sfx_slide
-    lda sfxwarb,x
-    sta sfx_warb
+    lda sfxgate,x
+    sta sfx_gate
     lda sfxdur,x
     sta sfx_timer
     rts
@@ -68,23 +68,15 @@ sfx_update:
     sta SID_V1FL
     rts
 su_slide:
-    lda sfx_warb
+    lda sfx_gate         ; the alarm and the bloop ring in bursts
     beq su_bend
-    lda sfx_timer        ; the alarm: flip the pitch every 4 frames
-    and #3
-    bne su_bend
-    lda sfx_fh
-    eor sfx_warb
-    sta sfx_fh
-    sta SID_V1FH
-    lda sfx_timer        ; and ring in bursts
-    and #$10
-    beq su_gate
+    and sfx_timer
+    beq su_gon
     lda sfx_ctrl
     and #$fe
     sta SID_V1CR
     rts
-su_gate:
+su_gon:
     lda sfx_ctrl
     sta SID_V1CR
     rts
@@ -97,20 +89,22 @@ su_bend:
 su_idle:
     rts
 
-; ---- effect tables:
-; select, deselect, beep, success, bloop, alarm, drum, hit ----
-sfxfreq:  !byte $30, $40, $48, $28, $08, $50, $60, $30
-sfxslide: !byte $04, $fc, $00, $02, $ff, $00, $fa, $00
-sfxctrl:  !byte $21, $21, $11, $11, $21, $41, $81, $11
-sfxad:    !byte $08, $08, $04, $0a, $0a, $00, $04, $08
-sfxdur:   !byte $0a, $0a, $04, $28, $14, $c8, $03, $0c
-sfxwarb:  !byte $00, $00, $00, $00, $00, $0c, $00, $00
-sfxsr:    !byte $00, $00, $00, $00, $00, $f0, $00, $00
+; ---- effect tables, after the original's TIC-80 SFX:
+; select (17, C-7), deselect (18, C-7), beep (19, C-6),
+; success (16, C-7), bloop (21, C-3), alarm (34, C-5),
+; drum (61, C-6: the mash press), hit (56: the arrow's note) ----
+sfxfreq:  !byte $8b, $8b, $45, $8b, $08, $22, $45, $30
+sfxslide: !byte $00, $00, $00, $00, $00, $00, $00, $00
+sfxctrl:  !byte $11, $11, $11, $41, $41, $21, $81, $41
+sfxad:    !byte $09, $08, $07, $0a, $00, $00, $04, $06
+sfxsr:    !byte $00, $00, $00, $00, $f0, $f0, $00, $00
+sfxdur:   !byte $19, $19, $10, $32, $32, $c8, $06, $0c
+sfxgate:  !byte $00, $00, $00, $00, $04, $08, $00, $00
 
 ; ---- driver variables ----
 sfx_timer: !byte 0       ; frames left of the current effect
 sfx_fh:    !byte 0       ; frequency high byte shadow
 sfx_slide: !byte 0       ; signed per-frame pitch step
 sfx_ctrl:  !byte 0       ; control register shadow
-sfx_warb:  !byte 0       ; pitch flip mask (the alarm), 0 = none
+sfx_gate:  !byte 0       ; burst mask (alarm, bloop), 0 = none
 sfx_pitch: !byte 0       ; start pitch of the next effect

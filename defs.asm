@@ -156,6 +156,8 @@ BG_DAY     = 4
 BG_DDR     = 5
 BG_NONE    = $ff
 
+FIG_BIGNORMAN = $ff      ; the 4x norman of the menu (hires)
+
 ; ---- figure draw flags ----
 FF_FLIP  = 1             ; upside down (the commute glitch)
 FF_ECHO  = 2             ; norman's echo: white turns cyan
@@ -200,6 +202,8 @@ zt6     = $1a
 zt7     = $1b
 mm_tptr = $1c            ; the typewriter of the mysterious man
 cr_sptr = $1e            ; the credits scroller
+fadevec = $20            ; where the fade to black goes on (jmp indirect)
+flret   = $22            ; where the level-up flash returns
 
 ; ---- set the state update vector ----
 !macro setupd .addr {

@@ -52,6 +52,8 @@ mg_scene:
     ldy #POS_SLEEPING_Y
     jsr fig_draw
     jsr shadow_save
+    lda #LAY_SCENE
+    jsr set_layout
     lda #24              ; (98, 50) in 4 px units
     sta focus_x
     lda #12
@@ -121,8 +123,28 @@ mgbt_c:
     ldy #MG_BTN_ROW
     jmp print_center
 
-; ---- the success box in the middle of the scene: txt ----
+; ---- the success box: in the middle of the DDR screen, on the
+; instruction row under the multicolor scene of mash and rhythm ----
 win_overlay:
+    lda layout
+    cmp #LAY_HIRES
+    beq wo_box
+    lda txt
+    pha
+    lda txt+1
+    pha
+    lda #0
+    ldx #MG_TXT_ROW
+    ldy #1
+    jsr clear_rows
+    pla
+    sta txt+1
+    pla
+    sta txt
+    ldy #MG_TXT_ROW
+    lda #BLACK << 4 | WHITE
+    jmp print_center
+wo_box:
     lda txt
     pha
     lda txt+1
@@ -745,8 +767,9 @@ dt_c:
 
 ddrcol: !byte SCN_X+6, SCN_X+11, SCN_X+17, SCN_X+22   ; target columns
 ddrsx:  !byte 24+(SCN_X+6)*8, 24+(SCN_X+11)*8, 24+(SCN_X+17)*8, 24+(SCN_X+22)*8
-; the hit tones per direction (left, down, up, right)
-ddrtone: !byte $22, $2d, $33, $3d
+; the hit tones per direction (left, down, up, right), as the
+; original turns notes into arrows: C left, A down, D/E up, F/G right
+ddrtone: !byte $22, $39, $2b, $33     ; C-5, A-5, E-5, G-5 (the notes the original maps to them)
 
 ddr_bar:
     lda dd_fill          ; 0-100 -> 0-240 pixels
